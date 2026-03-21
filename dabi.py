@@ -67,9 +67,10 @@ class SkillType(enum.Enum):
 
 
 CSI = "\033["
-VERSION = "CCDabi v1.4.2"
+VERSION = "CCDabi v1.4.2 (patch 1)"
 UPDATE_NOTES = """\
 === v1.4.2 ===
+[CONTENT] 现在『超闪』或『控』后不能打出『超神之力』。
 [CONTENT] 添加了“CDC 特殊内容”分类。新增『棱盾』系列技能。
 [CONTENT] “假牙”模组现已开放。
 [CONTENT] 现在『单打独斗』可以使用任意元素打出。
@@ -921,6 +922,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
+                extra_check=lambda x: not x.superflashed and not x.konged
             )
         )
 

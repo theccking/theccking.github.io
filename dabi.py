@@ -52,10 +52,11 @@ from typing import Callable, Optional
 class SkillCategory(enum.Enum):
     BASE = "基础游戏"
     REJECTS = "原版禁用内容"
-    CCDC = "CDC 独家内容"
+    CCDC = "CDC 特殊内容"
     XIHAI = "西海模组"
     CCMOD = "CC国模组"
-    JIAYA = "假牙模组（未完成）"
+    JIAYA = "假牙模组"
+
 
 class SkillType(enum.Enum):
     YIELDS = 1
@@ -66,8 +67,15 @@ class SkillType(enum.Enum):
 
 
 CSI = "\033["
-VERSION = "CCDabi v1.3.2"
+VERSION = "CCDabi v1.4.2"
 UPDATE_NOTES = """\
+=== v1.4.2 ===
+[CONTENT] 添加了“CDC 特殊内容”分类。新增『棱盾』系列技能。
+[CONTENT] “假牙”模组现已开放。
+[CONTENT] 现在『单打独斗』可以使用任意元素打出。
+[BUGFIX]  修复了资源信息显示中模组资源不显示和『攒』显示错误的问题。
+[TECH]    添加了钩子 BEFOREROUND() AFTERROUND() BEFORESETTLE() 便于效果处理。\
+<PAUSE>\
 === v1.3.2 ===
 [FEATURE] 允许在回合结算界面查看双方资源信息。
 [CONTENT] 添加了“原版禁用内容”分类。
@@ -92,6 +100,7 @@ UPDATE_NOTES = """\
 """
 
 _counter = 0
+
 
 def iota():
     global _counter
@@ -237,7 +246,8 @@ class Infinity:
         return f"{self.factor} 倍率无限"
 
 
-inf: Infinity = Infinity() # type: ignore
+inf: Infinity = Infinity()  # type: ignore
+
 
 @dc.dataclass(repr=False)
 class Skill:
@@ -322,8 +332,16 @@ class Player:
     konged: bool = False
     resources: dict[int, int] = dc.field(default_factory=dict)
     duplicatedResources: dict[int, int] = dc.field(default_factory=dict)
-    effect: RoundEffect = dc.field(init=False, default_factory=RoundEffect)
-    defer: "Optional[Callable[[Player, Player], None]]" = dc.field(init=False, default=None)
+    roundEffect: RoundEffect = dc.field(init=False, default_factory=RoundEffect)
+    beforeRound: "list[Callable[[Player, Player], None]]" = dc.field(
+        init=False, default_factory=list
+    )
+    afterRound: "list[Callable[[Player, Player], None]]" = dc.field(
+        init=False, default_factory=list
+    )
+    beforeSettle: "list[Callable[[Player, Player], None]]" = dc.field(
+        init=False, default_factory=list
+    )
 
     def getPossibleResource(self, skill: Skill | int | str):
         id: int
@@ -355,28 +373,30 @@ class Player:
     def applyPoison(self):
         if self.poisonRemaining > 0:
             print(f"{CSI}32m剧毒 {CSI}0m{self.name} 受到 {CSI}31m1{CSI}0m 点剧毒伤害！")
-            self.effect.damageTaken += 1
+            self.roundEffect.damageTaken += 1
             self.poisonRemaining -= 1
 
     def takeDamage(self, opponent: "Player") -> int:
         controlled_rounds = 0
         shields = self.shields
 
-        if self.effect.damageTaken == 0:
+        if self.roundEffect.damageTaken == 0:
             return controlled_rounds
 
         pop_count = 0
 
-        while self.effect.damageTaken > 0 and len(shields) != 0:
+        while self.roundEffect.damageTaken > 0 and len(shields) != 0:
             shield = shields.pop()
             shield.on_break(self, opponent)
             pop_count += 1
             self.resources[shield.id] -= 1
             print(f"{CSI}36m护盾 {CSI}0m{self.name} 的{shield.name}已经破碎！")
 
-            self.effect.damageTaken = max(0, self.effect.damageTaken - shield.defense)
+            self.roundEffect.damageTaken = max(
+                0, self.roundEffect.damageTaken - shield.defense
+            )
             print(
-                f"{CSI}36m护盾 {CSI}0m{shield.name}为 {self.name} 抵挡了 {CSI}33m{shield.defense}{CSI}0m 点伤害，剩余伤害 {CSI}31m{self.effect.damageTaken}{CSI}0m"
+                f"{CSI}36m护盾 {CSI}0m{shield.name}为 {self.name} 抵挡了 {CSI}33m{shield.defense}{CSI}0m 点伤害，剩余伤害 {CSI}31m{self.roundEffect.damageTaken}{CSI}0m"
             )
             controlled_rounds += shield.controlRound
             if shield.controlRound > 0:
@@ -385,9 +405,9 @@ class Player:
                 )
 
         print(
-            f"{CSI}31m伤害 {CSI}0m{self.name} (HP: {CSI}33m{self.hp}{CSI}0m) 将承受{'剩余的' if pop_count > 0 else ''} {CSI}31m{self.effect.damageTaken}{CSI}0m 点伤害"
+            f"{CSI}31m伤害 {CSI}0m{self.name} (HP: {CSI}33m{self.hp}{CSI}0m) 将承受{'剩余的' if pop_count > 0 else ''} {CSI}31m{self.roundEffect.damageTaken}{CSI}0m 点伤害"
         )
-        self.hp -= self.effect.damageTaken
+        self.hp -= self.roundEffect.damageTaken
 
         return controlled_rounds
 
@@ -421,7 +441,7 @@ class UserInterface:
         chosen = 0
         system("cls")
         print("=" * 10, VERSION, "=" * 10)
-        print("你可以按 [v] 键查看版本更新信息。")
+        print("你可以按 [v] 键查看版本更新信息。强烈推荐您在版本更新后查看该信息。")
         print("\n\n")
         while True:
             print(f"{CSI}3A{CSI}J", end="")
@@ -489,7 +509,7 @@ class UserInterface:
     def selectSuits(self) -> set[SkillCategory]:
         system("cls")
 
-        disabled = (SkillCategory.JIAYA,)
+        disabled = ()
         required = (SkillCategory.BASE,)
         selected: set[SkillCategory] = set(required)
         hovering = 0
@@ -560,7 +580,9 @@ class UserInterface:
                 suits = set(SkillCategory[c] for c in room[1]["suits"])
                 if i == chosen:
                     print(f"    {CSI}90m房间 IP：{CSI}0m{room[0]}")
-                    print(f"    {CSI}90m模组套装：{CSI}0m{'、'.join(map(lambda x: x.value, suits))}")
+                    print(
+                        f"    {CSI}90m模组套装：{CSI}0m{'、'.join(map(lambda x: x.value, suits))}"
+                    )
 
             lagDfd = 1
             while lagDfd:
@@ -738,18 +760,23 @@ class UserInterface:
         print(f"=== {CSI}92m友方资源{CSI}0m ===")
 
         for i, skill in enumerate(yields):
-            print(f"  {CSI}90m{skill.name}33m{game.localPlayer.getPossibleResource(skill.id)}{CSI}0m")
+            print(
+                f"  {CSI}90m{skill.name}33m{game.localPlayer.getPossibleResource(skill.id)}{CSI}0m"
+            )
 
         print(f"=== {CSI}91m对手资源{CSI}0m ===")
 
         for i, skill in enumerate(yields):
-            print(f"  {CSI}90m{skill.name}33m{game.remotePlayer.getPossibleResource(skill.id)}{CSI}0m")
+            print(
+                f"  {CSI}90m{skill.name}33m{game.remotePlayer.getPossibleResource(skill.id)}{CSI}0m"
+            )
 
         print("=== 按任意键继续 ===")
         msvcrt.getch()
 
 
 PORT = 8878
+
 
 class Game:
     localPlayer: Player
@@ -1083,7 +1110,7 @@ class Game:
                 SkillType.ATTACK,
                 SkillCategory.BASE,
                 require(yuandun * 2),
-                damage=1.8,
+                damage=1.2,
             )
         )
 
@@ -1271,11 +1298,41 @@ class Game:
         )
 
         self.skills.append(
-            duel := Skill(
-                "单打独斗",
+            duel_f := Skill(
+                "单打独斗【方盾】",
                 SkillType.ATTACK,
                 SkillCategory.BASE,
                 require(fangdun * 15),
+                damage=inf * 0.5,
+            )
+        )
+
+        self.skills.append(
+            duel_y := Skill(
+                "单打独斗【圆盾】",
+                SkillType.ATTACK,
+                SkillCategory.BASE,
+                require(yuandun * 15),
+                damage=inf * 0.5,
+            )
+        )
+
+        self.skills.append(
+            duel_z := Skill(
+                "单打独斗【攒】",
+                SkillType.ATTACK,
+                SkillCategory.BASE,
+                require(zan * 15),
+                damage=inf * 0.5,
+            )
+        )
+
+        self.skills.append(
+            duel_d := Skill(
+                "单打独斗【大臂】",
+                SkillType.ATTACK,
+                SkillCategory.BASE,
+                require(dabi * 15),
                 damage=inf * 0.5,
             )
         )
@@ -1296,7 +1353,7 @@ class Game:
                 SkillType.ATTACK,
                 SkillCategory.BASE,
                 require(bang * 1),
-                damage=9999999.0 * 2,
+                damage=inf,
             )
         )
 
@@ -1603,8 +1660,245 @@ class Game:
                     damage=inf,
                 )
             )
-        
+
+        if SkillCategory.JIAYA in categories:
+            self.skills.append(
+                jiaya := Skill("假牙", SkillType.YIELDS, SkillCategory.JIAYA, require())
+            )
+
+            self.skills.append(
+                jia1 := Skill(
+                    "假牙刀",
+                    SkillType.ATTACK,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 1),
+                    damage=1.0,
+                )
+            )
+
+            self.skills.append(
+                jia2 := Skill(
+                    "门牙",
+                    SkillType.ATTACK,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 2),
+                    damage=2.0,
+                )
+            )
+
+            self.skills.append(
+                jia3 := Skill(
+                    "大板牙",
+                    SkillType.ATTACK,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 3),
+                    damage=3.0,
+                )
+            )
+
+            self.skills.append(
+                jia4 := Skill(
+                    "后槽牙",
+                    SkillType.ATTACK,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 4),
+                    damage=4.0,
+                )
+            )
+
+            self.skills.append(
+                jiadun := Skill(
+                    "假牙盾",
+                    SkillType.SHIELD,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 10, yuandun * 2),
+                    defense=4.0,
+                    controlRound=4,
+                )
+            )
+
+            self.skills.append(
+                jiaya_producer := Skill(
+                    "假牙 的 小型生产器",
+                    SkillType.MISCEL,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 2),
+                    predicator=lambda x, y: self.execute_duplicator(x, jiaya, 2, 2),
+                    extra_check=lambda x: self.check_duplicator(x, jiaya, 2),
+                )
+            )
+
+            self.skills.append(
+                jiaya_duplicator := Skill(
+                    "假牙 的 大型生产器",
+                    SkillType.MISCEL,
+                    SkillCategory.JIAYA,
+                    require(jiaya * 4),
+                    predicator=lambda x, y: self.execute_duplicator(x, jiaya, 4, 5),
+                    extra_check=lambda x: self.check_duplicator(x, jiaya, 4),
+                )
+            )
+
         if SkillCategory.CCDC in categories:
+            self.skills.append(
+                lengdun := Skill(
+                    "棱盾", SkillType.MISCEL, SkillCategory.CCDC, require()
+                )
+            )
+
+            self.skills.append(
+                strike := Skill(
+                    "肘",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 1),
+                    damage=0.9,
+                )
+            )
+
+            self.skills.append(
+                strike2 := Skill(
+                    "连肘",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 2),
+                    damage=1.8,
+                )
+            )
+
+            self.skills.append(
+                strike3 := Skill(
+                    "三连肘",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 3),
+                    damage=2.9,
+                )
+            )
+
+            self.skills.append(
+                strike4 := Skill(
+                    "重肘",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 4),
+                    damage=4.8,
+                )
+            )
+
+            self.skills.append(
+                strike6 := Skill(
+                    "肘击连段",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 6),
+                    damage=6.5,
+                )
+            )
+
+            self.skills.append(
+                strike8 := Skill(
+                    "肘之奥义",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 8),
+                    damage=6.0,
+                    poisonRound=4,
+                )
+            )
+
+            self.skills.append(
+                handknife := Skill(
+                    "手刃",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 1, dabi * 1),
+                    damage=2.3,
+                )
+            )
+
+            self.skills.append(
+                elbowfire := Skill(
+                    "肘击炮",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 3, zan * 1),
+                    damage=4.8,
+                )
+            )
+
+            self.skills.append(
+                elbowshan := Skill(
+                    "肘反",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(lengdun * 1),
+                    predicator=self.execute_elbowshan,
+                )
+            )
+
+            self.skills.append(
+                furnace := Skill(
+                    "锻炉",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(lengdun * 3),
+                    predicator=lambda x, y: self.execute_furnace(x, fangdun, dabi),
+                )
+            )
+
+            self.skills.append(
+                lengdun_producer := Skill(
+                    "棱盾 的 小型生产器",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(lengdun * 2),
+                    predicator=lambda x, y: self.execute_duplicator(x, lengdun, 2, 2),
+                    extra_check=lambda x: self.check_duplicator(x, lengdun, 2),
+                )
+            )
+
+            self.skills.append(
+                lengdun_duplicator := Skill(
+                    "棱盾 的 大型生产器",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(lengdun * 4),
+                    predicator=lambda x, y: self.execute_duplicator(x, lengdun, 4, 5),
+                    extra_check=lambda x: self.check_duplicator(x, lengdun, 4),
+                )
+            )
+
+            self.skills.append(
+                combat := Skill(
+                    "自由搏击·初",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 1, fangdun * 1, yuandun * 1),
+                    damage=3.8,
+                )
+            )
+
+            self.skills.append(
+                combat2 := Skill(
+                    "自由搏击·贯",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 2, fangdun * 2, yuandun * 2),
+                    damage=8.0,
+                )
+            )
+
+            self.skills.append(
+                combat3 := Skill(
+                    "自由搏击·极",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(lengdun * 3, fangdun * 3, yuandun * 3),
+                    damage=15.01,
+                )
+            )
+
             self.skills.append(
                 slamself := Skill(
                     "重锤（自身）",
@@ -1635,10 +1929,10 @@ class Game:
                     require(fangdun * 4),
                     defense=3.2,
                     desc="破碎时，获得3个圆盾",
-                    predicator=lambda x, y: self.execute_rescue(x, yuandun*3)
+                    predicator=lambda x, y: self.execute_rescue(x, yuandun * 3),
                 )
             )
-            
+
             self.skills.append(
                 dhealth := Skill(
                     "国家卫生局",
@@ -1647,10 +1941,10 @@ class Game:
                     require(yuandun * 4),
                     defense=3.4,
                     desc="破碎时，获得3个攒",
-                    predicator=lambda x, y: self.execute_rescue(x, zan*3)
+                    predicator=lambda x, y: self.execute_rescue(x, zan * 3),
                 )
             )
-            
+
             self.skills.append(
                 dedu := Skill(
                     "国家教育局",
@@ -1659,10 +1953,10 @@ class Game:
                     require(zan * 4),
                     defense=3.2,
                     desc="破碎时，获得3个大臂",
-                    predicator=lambda x, y: self.execute_rescue(x, dabi*3)
+                    predicator=lambda x, y: self.execute_rescue(x, dabi * 3),
                 )
             )
-            
+
             self.skills.append(
                 dagri := Skill(
                     "国家农业局",
@@ -1671,15 +1965,43 @@ class Game:
                     require(dabi * 4),
                     defense=3,
                     desc="破碎时，获得3个方盾",
-                    predicator=lambda x, y: self.execute_rescue(x, fangdun*3)
+                    predicator=lambda x, y: self.execute_rescue(x, fangdun * 3),
+                )
+            )
+
+            self.skills.append(
+                cannon := Skill(
+                    "玻璃大炮",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(),
+                    predicator=self.execute_cannon,
+                    extra_check=lambda x: x.hp >= 1.0,
                 )
             )
 
         self.dict_skills = locals().copy()
         self.dict_skills.pop("self")
 
+    def execute_elbowshan(self, player: Player, opponent: Player):
+        player.roundEffect.damageTaken -= 3.8
+
+    def execute_furnace(self, player: Player, fangdun: Skill, dabi: Skill):
+        player.resources.setdefault(fangdun.id, 0)
+        player.resources.setdefault(dabi.id, 0)
+        player.resources[fangdun.id] += 2
+        player.resources[dabi.id] += 1
+
+    def cannon_beforeSettle(self, remote: Player, local: Player):
+        if 0 < remote.roundEffect.damageTaken < 5:
+            remote.roundEffect.damageTaken += 1
+
+    def execute_cannon(self, player: Player, opponent: Player):
+        player.hp -= 1.0
+        opponent.beforeSettle.append(self.cannon_beforeSettle)
+
     def execute_invincible(self, player: Player, opponent: Player):
-        player.effect.damageTaken -= inf
+        player.roundEffect.damageTaken -= inf
 
     def execute_rescue(self, player: Player, save: tuple[int, int]):
         player.resources.setdefault(save[0], 0)
@@ -1714,16 +2036,16 @@ class Game:
 
     def execute_shan(self, player: Player, opponent: Player):
         player.flash_count += 1
-        player.effect.damageTaken -= 2
+        player.roundEffect.damageTaken -= 2
 
     def execute_supershan(self, player: Player, opponent: Player):
         player.superflashed = True
-        player.effect.damageTaken -= 10
+        player.roundEffect.damageTaken -= 10
 
     def execute_kong(self, player: Player, opponent: Player):
         player.konged = True
         player.superflashed = True
-        player.effect.damageTaken -= 114.514
+        player.roundEffect.damageTaken -= 114.514
 
     def execute_rush(self, player: Player, opponent: Player):
         player.hp -= 1.0
@@ -1737,7 +2059,7 @@ class Game:
     def execute_slam(self, player: Player):
         player.hp = 0
         player.shields.clear()
-        player.effect.damageTaken -= inf*inf
+        player.roundEffect.damageTaken -= inf * inf
 
     def isSkillAvailable(self, player: Player, skill: Skill):
         return player.isValidPlay(skill) and skill.extra_check(player)
@@ -1773,7 +2095,7 @@ class Game:
     def executeSkill(self, sub: Player, ob: Player, skill: Skill):
         sub.consumeResource(skill.requirement)
         skill.predicator(sub, ob)
-        ob.effect.register(skill)
+        ob.roundEffect.register(skill)
         sub.resources.setdefault(skill.id, 0)
         sub.resources[skill.id] += 1
 
@@ -1785,8 +2107,8 @@ class Game:
         self, n: int, lSkill: Optional[Skill] = None, rSkill: Optional[Skill] = None
     ) -> bool:
         # 清除上回合伤害状态
-        self.localPlayer.effect.clear()
-        self.remotePlayer.effect.clear()
+        self.localPlayer.roundEffect.clear()
+        self.remotePlayer.roundEffect.clear()
 
         self.localPlayer.roundsControlled = max(
             self.localPlayer.roundsControlled - 1, 0
@@ -1806,17 +2128,15 @@ class Game:
         else:
             print(f"{CSI}91m对方 {CSI}0m{self.remotePlayer.name} 的抉择：{rSkill.name}")
 
+        for f in self.localPlayer.beforeRound:
+            f(self.localPlayer, self.remotePlayer)
+
+        for f in self.remotePlayer.beforeRound:
+            f(self.remotePlayer, self.localPlayer)
+
         # 处理中毒和延迟操作
         self.localPlayer.applyPoison()
         self.remotePlayer.applyPoison()
-
-        if self.localPlayer.defer is not None:
-            self.localPlayer.defer(self.localPlayer, self.remotePlayer)
-            self.localPlayer.defer = None
-
-        if self.remotePlayer.defer is not None:
-            self.remotePlayer.defer(self.remotePlayer, self.localPlayer)
-            self.remotePlayer.defer = None
 
         # 执行技能效果，结算伤害
         if lSkill is not None:
@@ -1825,7 +2145,13 @@ class Game:
         if rSkill is not None:
             self.executeSkill(self.remotePlayer, self.localPlayer, rSkill)
 
-        self.localPlayer.effect.offset(self.remotePlayer.effect)
+        for f in self.localPlayer.beforeSettle:
+            f(self.localPlayer, self.remotePlayer)
+
+        for f in self.remotePlayer.beforeSettle:
+            f(self.remotePlayer, self.localPlayer)
+
+        self.localPlayer.roundEffect.offset(self.remotePlayer.roundEffect)
 
         # 结算盾牌状态（被控将不会受到伤害）
         if lSkill is not None:
@@ -1841,6 +2167,13 @@ class Game:
             )
         else:
             print(f"{self.remotePlayer.name} 被控制，免疫伤害！")
+
+        # 结算回合结束
+        for f in self.localPlayer.afterRound:
+            f(self.localPlayer, self.remotePlayer)
+
+        for f in self.remotePlayer.afterRound:
+            f(self.remotePlayer, self.localPlayer)
 
         if self.localPlayer.hp < 0:
             print(f"{CSI}31m结算 {CSI}0m{self.localPlayer.name} 阵亡！")

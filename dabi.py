@@ -67,8 +67,19 @@ class SkillType(enum.Enum):
 
 
 CSI = "\033["
-VERSION = "CCDabi v1.4.2 (patch 1)"
+VERSION = "CCDabi v1.5.1"
 UPDATE_NOTES = """\
+THE CCDABI GAME
+COPYRIGHT (C) M.YAN 2026
+
+=== v1.5.2 ===
+[FEATURE] 允许在一局游戏结束后继续游戏。
+[FEATURE] 允许在回合结算界面查看全部技能的信息。
+[FEATURE] 提供了『方盾』和『圆盾』的 1 点闪避数值。
+[CONTENT] 更改了“自由搏击”系列技能的数值。
+[BUGFIX]  缓解了网络连接导致的游戏开始时间不同步问题。
+[BUGFIX]  修复了资源显示界面字符显示错误的问题。\
+<PAUSE>\
 === v1.4.2 ===
 [CONTENT] 现在『超闪』或『控』后不能打出『超神之力』。
 [CONTENT] 添加了“CDC 特殊内容”分类。新增『棱盾』系列技能。
@@ -77,7 +88,7 @@ UPDATE_NOTES = """\
 [BUGFIX]  修复了资源信息显示中模组资源不显示和『攒』显示错误的问题。
 [TECH]    添加了钩子 BEFOREROUND() AFTERROUND() BEFORESETTLE() 便于效果处理。\
 <PAUSE>\
-=== v1.3.2 ===
+=== v1.3.1 ===
 [FEATURE] 允许在回合结算界面查看双方资源信息。
 [CONTENT] 添加了“原版禁用内容”分类。
 [UI]      优化了房间创建和操作选择界面界面。
@@ -405,6 +416,9 @@ class Player:
                     f"{CSI}33m控制 {CSI}0m{opponent.name} 被控制 {CSI}33m{shield.controlRound}{CSI}0m 回合！"
                 )
 
+        if isinstance(self.roundEffect.damageTaken, float):
+            self.roundEffect.damageTaken = round(self.roundEffect.damageTaken, 2)
+
         print(
             f"{CSI}31m伤害 {CSI}0m{self.name} (HP: {CSI}33m{self.hp}{CSI}0m) 将承受{'剩余的' if pop_count > 0 else ''} {CSI}31m{self.roundEffect.damageTaken}{CSI}0m 点伤害"
         )
@@ -443,6 +457,7 @@ class UserInterface:
         system("cls")
         print("=" * 10, VERSION, "=" * 10)
         print("你可以按 [v] 键查看版本更新信息。强烈推荐您在版本更新后查看该信息。")
+        print("你可以按 [q] 键完全退出游戏。")
         print("\n\n")
         while True:
             print(f"{CSI}3A{CSI}J", end="")
@@ -486,7 +501,10 @@ class UserInterface:
                     system("cls")
                     print("=" * 10, VERSION, "=" * 10)
                     print("你可以按 [v] 键查看版本更新信息。")
+                    print("你可以按 [q] 键完全退出游戏。")
                     print("\n\n")
+                elif ch == b"q":
+                    raise SystemExit(0)
                 else:
                     lagDfd = 1
 
@@ -687,6 +705,7 @@ class UserInterface:
                             print(f"    {CSI}90m{skill.desc}{CSI}0m")
                         print(f"    {CSI}90m消耗资源：{CSI}0m{skill.requirement}")
                         print(f"    {CSI}90m造成伤害：{CSI}0m{skill.damage}")
+                        print(f"    {CSI}90m剧毒持续：{CSI}0m{skill.poisonRound}")
 
             print(
                 f"{'v ' + CSI + '47;30m' if selected_type == 4 else '> '}特殊操作"
@@ -741,12 +760,158 @@ class UserInterface:
                 else:
                     lagDfd = 1
 
+    def viewActions(
+        self, n: int, skills: list[Skill], isAvailable: Callable[[Skill], bool]
+    ):
+        yields: list[Skill] = []
+        attack: list[Skill] = []
+        shield: list[Skill] = []
+        miscel: list[Skill] = []
+        mapping: dict[tuple[int, int], int] = {}
+
+        for skill in skills:
+            if skill.type == SkillType.YIELDS:
+                mapping[(1, len(yields))] = skill.id
+                yields.append(skill)
+
+            elif skill.type == SkillType.SHIELD:
+                mapping[(2, len(shield))] = skill.id
+                shield.append(skill)
+
+            elif skill.type == SkillType.ATTACK:
+                mapping[(3, len(attack))] = skill.id
+                attack.append(skill)
+
+            elif skill.type == SkillType.MISCEL:
+                mapping[(4, len(miscel))] = skill.id
+                miscel.append(skill)
+
+        lengths = [0, len(yields), len(shield), len(attack), len(miscel)]
+
+        selected_type = 1
+        selected_skill = -1
+
+        while True:
+            system("cls")
+            print("=" * 10, f"第 {n} 回合 选择", "=" * 10)
+            print(
+                f"{'v ' + CSI + '47;30m' if selected_type == 1 else '> '}积攒资源"
+                + CSI
+                + "0m"
+            )
+            if selected_type == 1:
+                for i, skill in enumerate(yields):
+                    print(
+                        f"  {'> ' + CSI + ('42;30m' if isAvailable(skill) else '41;30m') if i == selected_skill else '  '}{skill.name} "
+                        + CSI
+                        + "0m"
+                    )
+                    if i == selected_skill and skill.desc is not None:
+                        print(f"    {CSI}90m{skill.desc}{CSI}0m")
+
+            print(
+                f"{'v ' + CSI + '47;30m' if selected_type == 2 else '> '}佩戴盾牌"
+                + CSI
+                + "0m"
+            )
+            if selected_type == 2:
+                for i, skill in enumerate(shield):
+                    print(
+                        f"  {'> ' + CSI + ('42;30m' if isAvailable(skill) else '41;30m') if i == selected_skill else '  '}{skill.name}"
+                        + CSI
+                        + "0m"
+                    )
+                    if i == selected_skill:
+                        if skill.desc is not None:
+                            print(f"    {CSI}90m{skill.desc}{CSI}0m")
+                        print(f"    {CSI}90m需要资源：{CSI}0m{skill.requirement}")
+                        print(f"    {CSI}90m防御力：{CSI}0m{skill.defense}")
+                        print(f"    {CSI}90m控制回合数：{CSI}0m{skill.controlRound}")
+
+            print(
+                f"{'v ' + CSI + '47;30m' if selected_type == 3 else '> '}进攻对手"
+                + CSI
+                + "0m"
+            )
+            if selected_type == 3:
+                for i, skill in enumerate(attack):
+                    print(
+                        f"  {'> ' + CSI + ('42;30m' if isAvailable(skill) else '41;30m') if i == selected_skill else '  '}{skill.name}"
+                        + CSI
+                        + "0m"
+                    )
+                    if i == selected_skill:
+                        if skill.desc is not None:
+                            print(f"    {CSI}90m{skill.desc}{CSI}0m")
+                        print(f"    {CSI}90m需要资源：{CSI}0m{skill.requirement}")
+                        print(f"    {CSI}90m造成伤害：{CSI}0m{skill.damage}")
+                        print(f"    {CSI}90m剧毒持续：{CSI}0m{skill.poisonRound}")
+
+            print(
+                f"{'v ' + CSI + '47;30m' if selected_type == 4 else '> '}特殊操作"
+                + CSI
+                + "0m"
+            )
+            if selected_type == 4:
+                for i, skill in enumerate(miscel):
+                    print(
+                        f"  {'> ' + CSI + ('42;30m' if isAvailable(skill) else '41;30m') if i == selected_skill else '  '}{skill.name}"
+                        + CSI
+                        + "0m"
+                    )
+                    if i == selected_skill:
+                        if skill.desc is not None:
+                            print(f"    {CSI}90m{skill.desc}{CSI}0m")
+                        print(f"    {CSI}90m需要资源：{CSI}0m{skill.requirement}")
+
+            lagDfd = 1
+            while lagDfd:
+                lagDfd = 0
+                ch = msvcrt.getch()
+                # 上下左右箭头控制
+                if ch == b"\r" or ch == b"q":
+                    return
+                elif ch == b"\xe0":
+                    arrow = msvcrt.getch()
+                    if arrow == b"H":
+                        if selected_skill == 0:
+                            selected_skill = -1
+                        elif selected_skill == -1:
+                            selected_type = max(1, selected_type - 1)
+                            selected_skill = -1
+                        else:
+                            selected_skill -= 1
+
+                    elif arrow == b"P":
+                        if selected_skill == lengths[selected_type] - 1:
+                            selected_type = min(4, selected_type + 1)
+                            selected_skill = -1
+                        else:
+                            selected_skill += 1
+
+                elif ch == b"w":
+                    selected_type = min(4, selected_type + 1)
+                    selected_skill = -1
+
+                elif ch == b"b":
+                    selected_type = max(1, selected_type - 1)
+                    selected_skill = -1
+
+                else:
+                    lagDfd = 1
+
     def tryShowMaterials(self, n: int, localPlayer: Player, remotePlayer: Player):
-        print("=== 按 [b] 以查看双方资源或按任意键继续 ===")
+        print("==> [b]: 查看双方资源")
+        print("==> [c]: 查看全部技能")
+        print("==> 按任意键进行下一回合...")
         ch = msvcrt.getch()
         if ch == b"b":
             self.showMaterials(n, game)
             system("cls")
+        elif ch == b"c":
+            self.viewActions(
+                n, game.skills, lambda x: game.isSkillAvailable(game.localPlayer, x)
+            )
         else:
             return
 
@@ -762,14 +927,14 @@ class UserInterface:
 
         for i, skill in enumerate(yields):
             print(
-                f"  {CSI}90m{skill.name}33m{game.localPlayer.getPossibleResource(skill.id)}{CSI}0m"
+                f"  {CSI}90m{skill.name}{CSI}33m{game.localPlayer.getPossibleResource(skill.id)}{CSI}0m"
             )
 
         print(f"=== {CSI}91m对手资源{CSI}0m ===")
 
         for i, skill in enumerate(yields):
             print(
-                f"  {CSI}90m{skill.name}33m{game.remotePlayer.getPossibleResource(skill.id)}{CSI}0m"
+                f"  {CSI}90m{skill.name}{CSI}33m{game.remotePlayer.getPossibleResource(skill.id)}{CSI}0m"
             )
 
         print("=== 按任意键继续 ===")
@@ -844,7 +1009,7 @@ class Game:
         self.sock = client
         self.sock.send(json.dumps([c.name for c in self.suits]).encode())
 
-        print("对手已连接，游戏开始！")
+        print("对手已连接！")
         return True
 
     def asGuest(self, address: str) -> bool:
@@ -855,11 +1020,11 @@ class Game:
             suits = json.loads(self.sock.recv(1024).decode())
             self.suits = set(SkillCategory[c] for c in suits)
             self.gameReady = True
-        except:
+        except Exception:
             print("连接失败！请检查地址是否正确")
             self.sock.close()
             return False
-        print("连接成功，游戏开始！")
+        print("连接成功！")
         return True
 
     def syncPlayerInfo(self) -> bool:
@@ -868,16 +1033,21 @@ class Game:
         try:
             self.sock.send(self.localPlayer.name.encode())
             remote_name = self.sock.recv(64)
-        except:
+        except Exception:
             print("同步用户信息失败！")
             return False
+
         self.remotePlayer.name = remote_name.decode()
         print("对战信息：")
         print(f"你：{self.localPlayer.name}")
         print(f"对手：{self.remotePlayer.name}")
+        print("游戏加载完成，按任意键开始！")
+        msvcrt.getch()
         return True
 
     def initSkills(self, *categories: SkillCategory):
+        self.skills.clear()
+        self.dict_skills.clear()
         # === 货币 ===
 
         self.skills.append(
@@ -886,6 +1056,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
+                predicator=self.execute_fangdun_yuandun,
             )
         )
 
@@ -895,6 +1066,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
+                predicator=self.execute_fangdun_yuandun,
             )
         )
 
@@ -922,7 +1094,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
-                extra_check=lambda x: not x.superflashed and not x.konged
+                extra_check=lambda x: not x.superflashed and not x.konged,
             )
         )
 
@@ -1744,7 +1916,7 @@ class Game:
         if SkillCategory.CCDC in categories:
             self.skills.append(
                 lengdun := Skill(
-                    "棱盾", SkillType.MISCEL, SkillCategory.CCDC, require()
+                    "棱盾", SkillType.YIELDS, SkillCategory.CCDC, require()
                 )
             )
 
@@ -1896,8 +2068,8 @@ class Game:
                     "自由搏击·极",
                     SkillType.ATTACK,
                     SkillCategory.CCDC,
-                    require(lengdun * 3, fangdun * 3, yuandun * 3),
-                    damage=15.01,
+                    require(lengdun * 4, fangdun * 4, yuandun * 4),
+                    damage=inf,
                 )
             )
 
@@ -1984,6 +2156,9 @@ class Game:
 
         self.dict_skills = locals().copy()
         self.dict_skills.pop("self")
+
+    def execute_fangdun_yuandun(self, player: Player, opponent: Player):
+        player.roundEffect.damageTaken -= 1
 
     def execute_elbowshan(self, player: Player, opponent: Player):
         player.roundEffect.damageTaken -= 3.8
@@ -2194,7 +2369,7 @@ class Game:
         print("等待对手操作...")
         try:
             self.sock.send(local_action.pack())
-        except:
+        except Exception:
             print(f"{CSI}31m错误 {CSI}0m连接断开，游戏结束。")
             return False
 
@@ -2274,7 +2449,9 @@ class Game:
             if not self.asGuest(ip):
                 return False
 
+        print("正在初始化游戏...")
         self.initSkills(*self.suits)
+        print("同步玩家信息...")
         if not self.syncPlayerInfo():
             return False
 
@@ -2297,9 +2474,11 @@ class Game:
             print("游戏初始化失败！")
             return
         self.start()
+        print("=" * 3, "按任意键回到主菜单", "=" * 3)
+        msvcrt.getch()
 
 
 if __name__ == "__main__":
-    game = Game()
-    game.run()
-    system("pause")
+    while True:
+        game = Game()
+        game.run()

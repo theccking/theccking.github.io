@@ -12,4 +12,7 @@
 
 更新时间：2026 年 3 月 21 日
 
-下载链接：CCDabi [稳定版 1.4.2](/dabi.py)
+下载链接：CCDabi [稳定版 1.6.1](/dabi.py)
+CCDabi 使用 [CC-BY-NC-SA 4.0 许可协议](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.zh-hans#legal-code-title)。访问并使用本软件，即表示您已阅读、理解并同意接受本协议。
+
+任何操作问题均可查看 [玩家手册](/manual.html)。

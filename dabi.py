@@ -1068,7 +1068,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
-                predicator=lambda x, y: self.execute_protect_from(x, y, fangdun, dabi),
+                predicator=lambda x, y: self.execute_protect_from(x, y, fangdun, dabi, fang_fudao),
             )
         )
 
@@ -1078,7 +1078,7 @@ class Game:
                 SkillType.YIELDS,
                 SkillCategory.BASE,
                 require(),
-                predicator=lambda x, y: self.execute_protect_from(x, y, yuandun, zan),
+                predicator=lambda x, y: self.execute_protect_from(x, y, yuandun, zan, yuan_fudao),
             )
         )
 
@@ -1169,7 +1169,7 @@ class Game:
         # === 基础攻击 ===
         self.skills.append(
             fang_fudao := Skill(
-                "方斧刀", 
+                "方辅刀", 
                 SkillType.ATTACK,
                 SkillCategory.BASE,
                 require(),
@@ -1180,7 +1180,7 @@ class Game:
 
         self.skills.append(
             yuan_fudao := Skill(
-                "圆斧刀",
+                "圆辅刀",
                 SkillType.ATTACK,
                 SkillCategory.BASE,
                 require(),
@@ -2016,6 +2016,17 @@ class Game:
             )
 
             self.skills.append(
+                zhi := Skill(
+                    "掷",
+                    SkillType.ATTACK,
+                    SkillCategory.CCDC,
+                    require(),
+                    damage=0.02,
+                    predicator=lambda x, y: x.disable(zhi, waitUntil=2)
+                )
+            )
+
+            self.skills.append(
                 handknife := Skill(
                     "手刃",
                     SkillType.ATTACK,
@@ -2196,7 +2207,7 @@ class Game:
             return
         
         if any(
-            opponent.skillPlayed.requirement.includes(skill.id)
+            opponent.skillPlayed.requirement.includes(skill.id) or skill == opponent.skillPlayed
             for skill in skills
         ):
             player.roundEffect.reduce(1)

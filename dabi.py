@@ -307,6 +307,10 @@ class RoundEffect:
 
     def clear(self):
         self.damageTaken: float | Infinity = 0
+        self.endured: bool = False
+
+    def endure(self):
+        self.endured = True
 
     def offset(self, other: "RoundEffect"):
         self.damageTaken = max(self.damageTaken, 0)
@@ -334,6 +338,9 @@ class Player:
     duplicatedResources: dict[int, int] = dc.field(default_factory=dict)
     roundEffect: RoundEffect = dc.field(init=False, default_factory=RoundEffect)
     skillPlayed: Skill | None = None
+    defer: "list[Callable[[Player, Player], None]]" = dc.field(
+        init=False, default_factory=list
+    )
     beforeRound: "list[Callable[[Player, Player], None]]" = dc.field(
         init=False, default_factory=list
     )
@@ -428,7 +435,13 @@ class Player:
         print(
             f"{CSI}31m伤害 {CSI}0m{self.name} (HP: {CSI}33m{self.hp}{CSI}0m) 将承受{'剩余的' if pop_count > 0 else ''} {CSI}31m{self.roundEffect.damageTaken}{CSI}0m 点伤害"
         )
-        self.hp -= self.roundEffect.damageTaken
+
+        if self.roundEffect.endured:
+            print(
+                f"{CSI}31m伤害 {CSI}0m{self.name} 回合内无敌！"
+            )
+        else:
+            self.hp -= self.roundEffect.damageTaken
 
         return controlled_rounds
 
@@ -1552,7 +1565,7 @@ class Game:
                 SkillType.MISCEL,
                 SkillCategory.BASE,
                 require(dabi * 30),
-                predicator=self.execute_invincible,
+                predicator=lambda x, y: x.roundEffect.endure(),
             )
         )
 
@@ -1855,7 +1868,7 @@ class Game:
                     SkillType.ATTACK,
                     SkillCategory.CCMOD,
                     require(milk * 30),
-                    predicator=self.execute_invincible,
+                    predicator=lambda x, y: x.roundEffect.endure(),
                 )
             )
 
@@ -2189,6 +2202,29 @@ class Game:
             )
 
             self.skills.append(
+                dphy := Skill(
+                    "国家体育局",
+                    SkillType.SHIELD,
+                    SkillCategory.CCDC,
+                    require(lengdun * 1),
+                    defense=3.2,
+                    desc="破碎时，获得2个棱盾",
+                    on_break=lambda x, y: self.execute_rescue(x, lengdun * 2),
+                )
+            )
+
+            self.skills.append(
+                zhoupower := Skill(
+                    "肘之力",
+                    SkillType.SHIELD,
+                    SkillCategory.CCDC,
+                    require(lengdun*5),
+                    defense=5,
+                    controlRound=3
+                )
+            )
+
+            self.skills.append(
                 cannon := Skill(
                     "玻璃大炮",
                     SkillType.MISCEL,
@@ -2199,8 +2235,53 @@ class Game:
                 )
             )
 
+            self.skills.append(
+                ctopia := Skill(
+                    "CTOPIA",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(dfire*1, dhealth*1, dedu*1, dagri*1, dphy*1),
+                    predicator=lambda x, y: x.roundEffect.endure()
+                )
+            )
+
+            self.skills.append(
+                advent := Skill(
+                    "降临",
+                    SkillType.MISCEL,
+                    SkillCategory.CCDC,
+                    require(),
+                    predicator=self.execute_advent,
+                )
+            )
+
+            self.skills.append(
+                totem := Skill(
+                    f"{CSI}33m不死图腾{CSI}0m",
+                    SkillType.SHIELD,
+                    SkillCategory.CCDC,
+                    require(zhoupower*4),
+                    on_break=self.execute_pop_totem
+                )
+            )
+
         self.dict_skills = locals().copy()
         self.dict_skills.pop("self")
+
+    def execute_totem_save(self, player: Player, opponent: Player):
+        if player.hp < 0:
+            player.hp = 1
+
+    def defer_remove_save(self, player: Player, opponent: Player):
+        player.afterRound.remove(self.execute_totem_save)
+
+    def execute_pop_totem(self, player: Player, opponent: Player):
+        player.afterRound.append(self.execute_totem_save)
+        player.defer.append(self.defer_remove_save)
+
+    def execute_advent(self, player: Player, opponent: Player):
+        player.roundEffect.endure()
+        opponent.hp = -inf # FORCE KILL
 
     def execute_protect_from(self, player: Player, opponent: Player, *skills: Skill):
         if opponent.skillPlayed is None:
@@ -2235,9 +2316,6 @@ class Game:
     def execute_cannon(self, player: Player, opponent: Player):
         player.hp -= 1.0
         opponent.beforeSettle.append(self.cannon_beforeSettle)
-
-    def execute_invincible(self, player: Player, opponent: Player):
-        player.roundEffect.damageTaken -= inf*inf*inf
 
     def execute_rescue(self, player: Player, save: tuple[int, int]):
         player.resources.setdefault(save[0], 0)
@@ -2350,6 +2428,15 @@ class Game:
             print(f"{CSI}91m对方 {CSI}0m{self.remotePlayer.name} 的抉择：无")
         else:
             print(f"{CSI}91m对方 {CSI}0m{self.remotePlayer.name} 的抉择：{rSkill.name}")
+
+        for f in self.localPlayer.defer:
+            f(self.localPlayer, self.remotePlayer)
+        
+        for f in self.remotePlayer.defer:
+            f(self.remotePlayer, self.localPlayer)
+
+        self.localPlayer.defer.clear()
+        self.remotePlayer.defer.clear()
 
         for f in self.localPlayer.beforeRound:
             f(self.localPlayer, self.remotePlayer)
